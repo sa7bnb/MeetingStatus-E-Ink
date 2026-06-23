@@ -40,8 +40,8 @@ Bluetooth address of the form `FF:FF:xx:xx:xx:xx`.
 Although some listings call it a "4-color / BWRY" tag, the units used here behave
 as a black/white/red panel and are driven with the BWR dual-plane image format.
 
-Purchased from AliExpress: *2.9'' Eink Screen Price Tag* (search for "Gicisky"
-or "PICKSMART e-paper ESL").
+**Purchased from AliExpress:**
+[1 Set 4 Colors 2.9'' Eink Screen Price Tag — Price Display Shelf Label ESL Digital Price Tag](https://www.aliexpress.com/item/1005002766306867.html)
 
 ---
 
