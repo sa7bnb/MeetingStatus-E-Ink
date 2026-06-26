@@ -2,19 +2,25 @@
 meeting_status.py
 -----------------
 System tray app that detects when you are in a meeting by watching
-microphone and camera usage in Windows, and shows the status on:
+microphone and camera usage in Windows, and whether the workstation is
+locked, and shows the status on:
 
   - A colored dot in the system tray (always)
   - A Gicisky / PICKSMART e-paper tag via Bluetooth, showing your
-    name on top and your status (AVAILABLE / IN MEETING) below.
+    name on top and your status (AVAILABLE / IN MEETING / AWAY) below.
 
 Everything in one file - no separate driver needed. The tag is only
-updated WHEN the status changes (Free <-> In meeting), because e-paper
-is slow to write (~15-20 s) and every write drains the battery.
+updated WHEN the status changes (Free <-> In meeting <-> Away), because
+e-paper is slow to write (~15-20 s) and every write drains the battery.
 
-Settings (name, tag address) are configured via the Settings dialog in
-the tray menu and stored in 'settings.json' next to the program.
-Windows only.
+Lock/unlock (Win+L) is detected via Windows session-change
+notifications: locking shows AWAY immediately, unlocking returns to
+AVAILABLE / IN MEETING immediately. Lock state comes only from these
+events, so the status can't get stuck on AWAY.
+
+Settings (name, tag address, icons) are configured via the Settings
+dialog in the tray menu and stored in 'settings.json' next to the
+program. Windows only.
 
 https://www.aliexpress.com/item/1005002766306867.html
 Color 2.9'' Eink Screen Price Tag Price Display Shelf Label Low Power Consumption ESL Digital Price Tag for Supermarket
@@ -31,15 +37,17 @@ DEFAULT_TAG_ADDRESS     = ""        # MAC address, set via Settings
 DEFAULT_TAG_ENABLED     = False
 DEFAULT_DISPLAY_NAME    = "Anders"  # name shown at the top of the tag
 DEFAULT_INTERVAL        = 5.0       # polling interval (s)
-DEFAULT_ICON_FREE       = "none"    # icon next to "FREE"
+DEFAULT_ICON_FREE       = "none"    # icon next to "AVAILABLE"
 DEFAULT_ICON_BUSY       = "none"    # icon next to "IN MEETING"
+DEFAULT_ICON_AWAY       = "none"    # icon next to "AWAY"
 
-STATUS_TEXT = {"FREE": "AVAILABLE", "BUSY": "IN MEETING"}
+STATUS_TEXT = {"FREE": "AVAILABLE", "BUSY": "IN MEETING", "AWAY": "AWAY"}
 
 # Available status icons (generic single-color symbols, drawn in code).
 # "none" = no icon.
 ICONS_FREE = ["none", "check", "thumb", "coffee", "circle", "smiley"]
 ICONS_BUSY = ["none", "speech", "camera", "headset", "phone", "video"]
+ICONS_AWAY = ["none", "lock", "door", "clock", "moon", "walk", "coffee"]
 ICON_LABELS = {
     "none":    "(none)",
     # free
@@ -54,6 +62,12 @@ ICON_LABELS = {
     "headset": "Headset",
     "phone":   "Phone",
     "video":   "Video / play",
+    # away
+    "lock":    "Padlock",
+    "door":    "Door",
+    "clock":   "Clock",
+    "moon":    "Moon",
+    "walk":    "Walking person",
 }
 
 # ============================================================
@@ -116,6 +130,7 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 COLORS = {
     "BUSY": (196, 49, 75),    # red
     "FREE": (146, 195, 83),   # green
+    "AWAY": (90, 120, 200),   # blue
     "OFF":  (138, 136, 134),  # gray
 }
 
@@ -218,6 +233,65 @@ def _draw_status_icon(draw, name, x, y, s, col):
         draw.ellipse([x+int(s*0.68)-er, y+int(s*0.36)-er, x+int(s*0.68)+er, y+int(s*0.36)+er], fill=col)
         draw.arc([x+int(s*0.28), y+int(s*0.40), x+int(s*0.72), y+int(s*0.78)],
                  start=20, end=160, fill=col, width=lw)
+    elif name == "lock":
+        # Padlock: body + shackle, with a keyhole punched out in white.
+        body_top = y + int(s*0.42)
+        draw.rounded_rectangle([x+int(s*0.18), body_top, x+int(s*0.82), y+int(s*0.94)],
+                               radius=int(s*0.10), fill=col)
+        lw = max(3, int(s*0.11))
+        # shackle (arch)
+        draw.arc([x+int(s*0.28), y+int(s*0.06), x+int(s*0.72), body_top + int(s*0.10)],
+                 start=180, end=360, fill=col, width=lw)
+        # keyhole
+        kr = max(2, int(s*0.07))
+        kcx = x+int(s*0.50); kcy = y+int(s*0.62)
+        draw.ellipse([kcx-kr, kcy-kr, kcx+kr, kcy+kr], fill=_PANEL_RGB["white"])
+        draw.rectangle([kcx-max(1, int(s*0.025)), kcy,
+                        kcx+max(1, int(s*0.025)), kcy+int(s*0.18)],
+                       fill=_PANEL_RGB["white"])
+    elif name == "door":
+        # Door panel with a small knob.
+        draw.rounded_rectangle([x+int(s*0.20), y+int(s*0.06),
+                                x+int(s*0.80), y+int(s*0.94)],
+                               radius=int(s*0.05), fill=col)
+        # inner cut to read as a door (white inset)
+        draw.rounded_rectangle([x+int(s*0.28), y+int(s*0.14),
+                                x+int(s*0.72), y+int(s*0.86)],
+                               radius=int(s*0.04), outline=_PANEL_RGB["white"],
+                               width=max(2, int(s*0.05)))
+        kr = max(2, int(s*0.045))
+        kcx = x+int(s*0.64); kcy = y+int(s*0.52)
+        draw.ellipse([kcx-kr, kcy-kr, kcx+kr, kcy+kr], fill=_PANEL_RGB["white"])
+    elif name == "clock":
+        lw = max(3, int(s*0.08))
+        draw.ellipse([x+int(s*0.08), y+int(s*0.08), x+int(s*0.92), y+int(s*0.92)],
+                     outline=col, width=lw)
+        cx = x+int(s*0.50); cy = y+int(s*0.50)
+        # hands (12 and 4 o'clock-ish)
+        draw.line([(cx, cy), (cx, y+int(s*0.22))], fill=col, width=max(2, int(s*0.07)))
+        draw.line([(cx, cy), (x+int(s*0.72), y+int(s*0.62))],
+                  fill=col, width=max(2, int(s*0.07)))
+    elif name == "moon":
+        # Crescent: big disc minus an offset disc (offset filled white).
+        draw.ellipse([x+int(s*0.14), y+int(s*0.08), x+int(s*0.90), y+int(s*0.92)], fill=col)
+        draw.ellipse([x+int(s*0.34), y+int(s*0.02), x+int(s*1.02), y+int(s*0.84)],
+                     fill=_PANEL_RGB["white"])
+    elif name == "walk":
+        # Simple walking stick-figure.
+        lw = max(3, int(s*0.10))
+        hr = int(s*0.10)
+        hcx = x+int(s*0.50); hcy = y+int(s*0.16)
+        draw.ellipse([hcx-hr, hcy-hr, hcx+hr, hcy+hr], fill=col)
+        # torso
+        draw.line([(hcx, hcy+hr), (x+int(s*0.46), y+int(s*0.58))], fill=col, width=lw)
+        # legs
+        draw.line([(x+int(s*0.46), y+int(s*0.58)), (x+int(s*0.28), y+int(s*0.92))],
+                  fill=col, width=lw)
+        draw.line([(x+int(s*0.46), y+int(s*0.58)), (x+int(s*0.66), y+int(s*0.90))],
+                  fill=col, width=lw)
+        # arms
+        draw.line([(hcx, y+int(s*0.34)), (x+int(s*0.30), y+int(s*0.46))], fill=col, width=lw)
+        draw.line([(hcx, y+int(s*0.34)), (x+int(s*0.68), y+int(s*0.44))], fill=col, width=lw)
 
 
 def panel_render_status(name, status_text, status_color, icon="none",
@@ -474,11 +548,15 @@ SETUP_GUIDE = """\
 ================================================================
 
 This program detects when you are in a meeting via microphone and
-camera usage in Windows. It shows the status on:
+camera usage in Windows, and when you lock your computer. It shows
+the status on:
 
   - A colored dot in the system tray (always)
   - A Gicisky / PICKSMART e-paper tag via Bluetooth, showing your
-    name on top and your status (AVAILABLE / IN MEETING) below.
+    name on top and your status below:
+        AVAILABLE  (black)
+        IN MEETING (red)
+        AWAY       (black) - shown when the computer is locked
 
 Everything in a single file. Windows only.
 
@@ -488,11 +566,22 @@ Everything in a single file. Windows only.
 ================================================================
 
 Windows tracks per-app mic/camera access in the registry. When an
-app has the device open, "LastUsedTimeStop" is 0. The program polls
-every five seconds:
+app has the device open, "LastUsedTimeStop" is 0.
+
+Lock/unlock is detected via Windows session-change notifications
+(a hidden window registered with WTSRegisterSessionNotification):
+
+  - Press Win+L (or lock any other way)  -->  AWAY, immediately.
+  - Unlock the computer                  -->  back to AVAILABLE or
+                                              IN MEETING, immediately.
+
+The lock state comes ONLY from these events - there is no desktop
+probing - so a managed/domain machine can't get stuck on AWAY.
+
+Status priority while UNLOCKED:
 
   Mic active OR camera active  -->  IN MEETING (red)
-  Both inactive                 -->  AVAILABLE (black)
+  Otherwise                    -->  AVAILABLE
 
 Works for Teams, Zoom, Meet, Webex, Slack, Discord, etc.
 NOTE: mute keeps the microphone open, so you show as IN MEETING
@@ -504,8 +593,8 @@ even while muted.
 ================================================================
 
 E-paper is slow: ~15-20 s per write, drains the battery. So the tag
-is only written WHEN the status switches between Free and In meeting
-- not on every poll.
+is only written WHEN the status switches between Available, In
+meeting and Away - not on every poll.
 
 
 ================================================================
@@ -517,7 +606,8 @@ is only written WHEN the status switches between Free and In meeting
 3. Check "Enable e-paper tag", click "Scan for tags".
 4. Select your tag, click "Use selected".
 5. Type your name in "Name on the tag".
-6. Click "Save".
+6. Optionally pick icons for Available / In meeting / Away.
+7. Click "Save".
 
 
 ================================================================
@@ -526,13 +616,13 @@ is only written WHEN the status switches between Free and In meeting
 
   pip install pystray Pillow bleak pyinstaller
   python -m PyInstaller --onefile --noconsole ^
-      --name MeetingStatusEPaper ^
+      --name MeetingStatus ^
       --hidden-import=PIL._tkinter_finder ^
       --collect-all pystray --collect-all PIL ^
       --collect-all bleak ^
-      meeting_status.py
+      MeetingStatus.py
 
-Result: dist\\MeetingStatusEPaper.exe
+Result: dist\\MeetingStatus.exe
 Autostart: place a shortcut in shell:startup.
 
 
@@ -546,6 +636,13 @@ Autostart: place a shortcut in shell:startup.
   remove/reinsert a battery and scan immediately.
 * Text looks wrong: adjust the PANEL_ constants at the top of the
   file (PANEL_ROTATION, PANEL_INVERT_BW, PANEL_INVERT_RED).
+* Lock not detected: the session-notification listener may have
+  failed to register (see meeting_status.log). Without it the AWAY
+  status won't trigger. Restart the program; if it still fails, check
+  that wtsapi32 is reachable on the machine.
+* Stuck on AWAY after unlocking: this version only changes lock state
+  from Win+L lock/unlock events, so it should clear the instant you
+  unlock. If it doesn't, check the log for an "unlock" entry.
 
 ================================================================
 """
@@ -597,7 +694,7 @@ def show_setup_help_now() -> None:
 class Settings:
     FIELDS = [
         "tag_enabled", "tag_address", "tag_name_prefix",
-        "display_name", "interval", "icon_free", "icon_busy",
+        "display_name", "interval", "icon_free", "icon_busy", "icon_away",
     ]
 
     def __init__(self):
@@ -608,6 +705,7 @@ class Settings:
         self.interval        = DEFAULT_INTERVAL
         self.icon_free       = DEFAULT_ICON_FREE
         self.icon_busy       = DEFAULT_ICON_BUSY
+        self.icon_away       = DEFAULT_ICON_AWAY
 
     def load(self) -> None:
         if SETTINGS_FILE.exists():
@@ -693,6 +791,204 @@ def is_microphone_in_use() -> Optional[str]:
 
 def is_camera_in_use() -> Optional[str]:
     return _capability_in_use("webcam")
+
+
+# ============================================================
+#  LOCK DETECTION (Win+L session events only)
+# ============================================================
+
+
+class SessionMonitor:
+    """Instant lock/unlock detection via Windows session-change events.
+
+    Creates a hidden message-only window, registers it for session
+    notifications, and runs a Win32 message loop on its own thread. On
+    WM_WTSSESSION_CHANGE with the lock/unlock subcodes it invokes the
+    supplied callbacks. If anything fails (non-Windows, missing APIs)
+    it stays silent and the poll loop remains the fallback."""
+
+    WM_WTSSESSION_CHANGE = 0x02B1
+    WTS_SESSION_LOCK     = 0x7
+    WTS_SESSION_UNLOCK   = 0x8
+    NOTIFY_FOR_THIS_SESSION = 0
+    WM_CLOSE = 0x0010
+
+    def __init__(self, on_lock, on_unlock):
+        self._on_lock = on_lock
+        self._on_unlock = on_unlock
+        self._thread: Optional[threading.Thread] = None
+        self._hwnd = None
+        self._user32 = None
+        self._wtsapi = None
+        self._wndproc_ref = None  # keep WNDPROC alive
+
+    def start(self) -> None:
+        if sys.platform != "win32":
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except Exception as e:
+            log.warning(f"Session monitor unavailable: {e}")
+            return
+
+        try:
+            # use_last_error=True so ctypes.get_last_error() is reliable.
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            wtsapi = ctypes.WinDLL("wtsapi32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            self._user32, self._wtsapi = user32, wtsapi
+
+            # LRESULT / LONG_PTR are pointer-sized; wintypes doesn't define
+            # LRESULT on all Python versions, so map it ourselves.
+            if ctypes.sizeof(ctypes.c_void_p) == 8:
+                LRESULT = ctypes.c_int64
+            else:
+                LRESULT = ctypes.c_long
+
+            WNDPROC = ctypes.WINFUNCTYPE(
+                LRESULT, wintypes.HWND, wintypes.UINT,
+                wintypes.WPARAM, wintypes.LPARAM)
+
+            # --- Correct prototypes (critical on 64-bit) ---
+            user32.DefWindowProcW.restype = LRESULT
+            user32.DefWindowProcW.argtypes = [
+                wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+
+            user32.CreateWindowExW.restype = wintypes.HWND
+            user32.CreateWindowExW.argtypes = [
+                wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+                wintypes.HINSTANCE, wintypes.LPVOID]
+
+            user32.DestroyWindow.restype = wintypes.BOOL
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+
+            user32.GetMessageW.restype = ctypes.c_int
+            user32.GetMessageW.argtypes = [
+                ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
+
+            user32.PostMessageW.restype = wintypes.BOOL
+            user32.PostMessageW.argtypes = [
+                wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+
+            wtsapi.WTSRegisterSessionNotification.restype = wintypes.BOOL
+            wtsapi.WTSRegisterSessionNotification.argtypes = [
+                wintypes.HWND, wintypes.DWORD]
+            wtsapi.WTSUnRegisterSessionNotification.restype = wintypes.BOOL
+            wtsapi.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+
+            kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+            kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+
+            def wndproc(hwnd, msg, wparam, lparam):
+                if msg == self.WM_WTSSESSION_CHANGE:
+                    code = int(wparam)
+                    if code == self.WTS_SESSION_LOCK:
+                        log.info("WTS_SESSION_LOCK received")
+                        try:
+                            self._on_lock()
+                        except Exception as e:
+                            log.warning(f"on_lock error: {e}")
+                    elif code == self.WTS_SESSION_UNLOCK:
+                        log.info("WTS_SESSION_UNLOCK received")
+                        try:
+                            self._on_unlock()
+                        except Exception as e:
+                            log.warning(f"on_unlock error: {e}")
+                    return 0
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            self._wndproc_ref = WNDPROC(wndproc)
+
+            class WNDCLASS(ctypes.Structure):
+                _fields_ = [
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
+                ]
+
+            user32.RegisterClassW.restype = wintypes.ATOM
+            user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASS)]
+
+            hinst = kernel32.GetModuleHandleW(None)
+
+            # Unique class name per process so re-registration can't clash.
+            class_name = f"MeetingStatusSessionWnd_{os.getpid()}"
+            wc = WNDCLASS()
+            wc.style = 0
+            wc.lpfnWndProc = self._wndproc_ref
+            wc.cbClsExtra = 0
+            wc.cbWndExtra = 0
+            wc.hInstance = hinst
+            wc.hIcon = None
+            wc.hCursor = None
+            wc.hbrBackground = None
+            wc.lpszMenuName = None
+            wc.lpszClassName = class_name
+
+            atom = user32.RegisterClassW(ctypes.byref(wc))
+            if not atom:
+                raise ctypes.WinError(ctypes.get_last_error())
+
+            # HWND_MESSAGE = -3 -> message-only window (no taskbar/UI).
+            HWND_MESSAGE = wintypes.HWND(-3)
+            hwnd = user32.CreateWindowExW(
+                0, class_name, "MeetingStatusSession",
+                0, 0, 0, 0, 0, HWND_MESSAGE, None, hinst, None)
+            if not hwnd:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._hwnd = hwnd
+
+            if not wtsapi.WTSRegisterSessionNotification(
+                    hwnd, self.NOTIFY_FOR_THIS_SESSION):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+            log.info("Session monitor active (instant lock/unlock).")
+
+            # Standard Win32 message loop. GetMessageW returns >0 normally,
+            # 0 on WM_QUIT, -1 on error.
+            msg = wintypes.MSG()
+            while True:
+                ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if ret == 0:       # WM_QUIT
+                    break
+                if ret == -1:      # error
+                    log.warning("GetMessageW error in session monitor")
+                    break
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+
+            log.info("Session monitor stopped.")
+
+        except Exception as e:
+            log.warning(f"Session monitor failed ({e}); "
+                        "lock/unlock (AWAY) will not be detected.")
+
+    def stop(self) -> None:
+        try:
+            if self._hwnd and self._user32:
+                if self._wtsapi:
+                    try:
+                        self._wtsapi.WTSUnRegisterSessionNotification(self._hwnd)
+                    except Exception:
+                        pass
+                # Post WM_CLOSE to break the message loop.
+                self._user32.PostMessageW(self._hwnd, self.WM_CLOSE, 0, 0)
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -785,7 +1081,11 @@ class TagTransport:
             status_color = "red"
             icon = self.settings.icon_busy
             border = "red"
-        else:
+        elif state == "AWAY":
+            status_color = "black"
+            icon = self.settings.icon_away
+            border = "black"
+        else:  # FREE
             status_color = "black"
             icon = self.settings.icon_free
             border = "black"
@@ -945,11 +1245,13 @@ def open_settings_dialog(settings: Settings, on_saved=None) -> None:
     ttk.Label(main, text="Status icons (on the tag)", font=("", 10, "bold")).grid(
         row=10, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-    # Map display label -> internal key, and reverse, for both dropdowns.
+    # Map display label -> internal key, and reverse, for each dropdown.
     free_labels = [ICON_LABELS[k] for k in ICONS_FREE]
     busy_labels = [ICON_LABELS[k] for k in ICONS_BUSY]
+    away_labels = [ICON_LABELS[k] for k in ICONS_AWAY]
     label_to_free = {ICON_LABELS[k]: k for k in ICONS_FREE}
     label_to_busy = {ICON_LABELS[k]: k for k in ICONS_BUSY}
+    label_to_away = {ICON_LABELS[k]: k for k in ICONS_AWAY}
 
     ttk.Label(main, text="When AVAILABLE:").grid(row=11, column=0, sticky="e", padx=(0, 6))
     var_icon_free = tk.StringVar(
@@ -963,22 +1265,28 @@ def open_settings_dialog(settings: Settings, on_saved=None) -> None:
     ttk.Combobox(main, textvariable=var_icon_busy, values=busy_labels,
                  state="readonly", width=24).grid(row=12, column=1, sticky="w", pady=2)
 
-    ttk.Separator(main).grid(row=13, column=0, columnspan=2, sticky="ew", pady=8)
+    ttk.Label(main, text="When AWAY:").grid(row=13, column=0, sticky="e", padx=(0, 6))
+    var_icon_away = tk.StringVar(
+        value=ICON_LABELS.get(settings.icon_away, ICON_LABELS["none"]))
+    ttk.Combobox(main, textvariable=var_icon_away, values=away_labels,
+                 state="readonly", width=24).grid(row=13, column=1, sticky="w", pady=2)
+
+    ttk.Separator(main).grid(row=14, column=0, columnspan=2, sticky="ew", pady=8)
     ttk.Label(main, text="Detection", font=("", 10, "bold")).grid(
-        row=14, column=0, columnspan=2, sticky="w", pady=(0, 4))
-    ttk.Label(main, text="Polling interval (s):").grid(row=15, column=0,
+        row=15, column=0, columnspan=2, sticky="w", pady=(0, 4))
+    ttk.Label(main, text="Polling interval (s):").grid(row=16, column=0,
                                                        sticky="e", padx=(0, 6))
     var_interval = tk.StringVar(value=str(settings.interval))
     ttk.Entry(main, textvariable=var_interval, width=10).grid(
-        row=15, column=1, sticky="w", pady=2)
+        row=16, column=1, sticky="w", pady=2)
 
-    ttk.Separator(main).grid(row=16, column=0, columnspan=2, sticky="ew", pady=8)
+    ttk.Separator(main).grid(row=17, column=0, columnspan=2, sticky="ew", pady=8)
     status_var = tk.StringVar(value=f"Settings file: {SETTINGS_FILE.name}")
     ttk.Label(main, textvariable=status_var, foreground="#555").grid(
-        row=17, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        row=18, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
     btns = ttk.Frame(main)
-    btns.grid(row=18, column=0, columnspan=2, sticky="ew")
+    btns.grid(row=19, column=0, columnspan=2, sticky="ew")
     btns.columnconfigure(0, weight=1)
 
     saved = {"ok": False}
@@ -993,6 +1301,7 @@ def open_settings_dialog(settings: Settings, on_saved=None) -> None:
         settings.display_name = var_name.get().strip() or "Status"
         settings.icon_free = label_to_free.get(var_icon_free.get(), "none")
         settings.icon_busy = label_to_busy.get(var_icon_busy.get(), "none")
+        settings.icon_away = label_to_away.get(var_icon_away.get(), "none")
         if settings.save():
             saved["ok"] = True
             root.destroy()
@@ -1030,6 +1339,11 @@ class App:
         self.last_source = "starting..."
         self.stop = False
         self.tag = TagTransport(settings)
+        # Set by the session monitor; the poll loop honours it so an
+        # instant lock isn't immediately overridden by a slow poll.
+        self.locked = False
+        self.session = SessionMonitor(self._on_session_lock,
+                                      self._on_session_unlock)
 
         self.icon = pystray.Icon(
             "meeting_status",
@@ -1048,8 +1362,8 @@ class App:
         )
 
     def _status_label(self) -> str:
-        return {"BUSY": "IN MEETING", "FREE": "AVAILABLE", "OFF": "OFF"}.get(
-            self.current, self.current)
+        return {"BUSY": "IN MEETING", "FREE": "AVAILABLE",
+                "AWAY": "AWAY", "OFF": "OFF"}.get(self.current, self.current)
 
     def _tag_label(self) -> str:
         if not self.tag.enabled:
@@ -1058,8 +1372,20 @@ class App:
             return "writing..."
         return "ready"
 
+    # --- Session-change callbacks (instant lock/unlock) ---
+    def _on_session_lock(self) -> None:
+        self.locked = True
+        log.info("Session locked (event)")
+        self._apply("AWAY", "locked")
+
+    def _on_session_unlock(self) -> None:
+        self.locked = False
+        log.info("Session unlocked (event)")
+        # Re-evaluate immediately so we don't wait for the next poll.
+        self._evaluate_unlocked()
+
     def _force_update(self, icon, item) -> None:
-        if self.current in ("BUSY", "FREE"):
+        if self.current in ("BUSY", "FREE", "AWAY"):
             log.info("Manual tag update")
             self.tag.publish(self.current, force=True)
 
@@ -1076,13 +1402,17 @@ class App:
         self.tag.restart()
         def repush():
             time.sleep(1.0)
-            if self.current in ("BUSY", "FREE"):
+            if self.current in ("BUSY", "FREE", "AWAY"):
                 self.tag.publish(self.current, force=True)
         threading.Thread(target=repush, daemon=True).start()
 
     def _quit(self, icon, item) -> None:
         log.info("Shutting down")
         self.stop = True
+        try:
+            self.session.stop()
+        except Exception:
+            pass
         self.tag.stop()
         icon.stop()
 
@@ -1095,24 +1425,34 @@ class App:
             log.info(f"{cmd} ({source})")
             self.tag.publish(cmd)
 
+    def _evaluate_unlocked(self) -> None:
+        """Pick BUSY/FREE from mic+camera (used right after unlock)."""
+        try:
+            mic_app = is_microphone_in_use()
+            cam_app = is_camera_in_use()
+            if mic_app or cam_app:
+                signals = []
+                if mic_app:
+                    signals.append(f"mic:{mic_app[:30]}")
+                if cam_app:
+                    signals.append(f"cam:{cam_app[:30]}")
+                self._apply("BUSY", ", ".join(signals))
+            else:
+                self._apply("FREE", "free")
+        except Exception as e:
+            log.warning(f"Evaluate error: {e}")
+
     def _poll_loop(self) -> None:
-        log.info("Polling started (microphone + camera)")
+        log.info("Polling started (microphone + camera; lock via Win+L events only)")
         while not self.stop:
             try:
-                mic_app = is_microphone_in_use()
-                cam_app = is_camera_in_use()
-                if mic_app or cam_app:
-                    cmd = "BUSY"
-                    signals = []
-                    if mic_app:
-                        signals.append(f"mic:{mic_app[:30]}")
-                    if cam_app:
-                        signals.append(f"cam:{cam_app[:30]}")
-                    source = ", ".join(signals)
-                else:
-                    cmd = "FREE"
-                    source = "free"
-                self._apply(cmd, source)
+                # Lock state comes ONLY from Win+L session events. While
+                # locked we keep the tag on AWAY and don't poll mic/cam;
+                # as soon as you unlock, the unlock event flips us back to
+                # AVAILABLE / IN MEETING. No desktop-probing fallback, so
+                # managed/domain machines can't get stuck on AWAY.
+                if not self.locked:
+                    self._evaluate_unlocked()
             except Exception as e:
                 log.warning(f"Poll error: {e}")
             self._sleep_interruptible(self.settings.interval)
@@ -1124,6 +1464,7 @@ class App:
 
     def run(self) -> None:
         self.tag.start()
+        self.session.start()
         threading.Thread(target=self._poll_loop, daemon=True).start()
         self.icon.run()
 
@@ -1145,8 +1486,8 @@ def main():
         sys.exit(1)
 
     ap = argparse.ArgumentParser(
-        description="Detects mic/camera usage on Windows. Status shown in the "
-                    "tray and on a BLE-paired e-paper tag.")
+        description="Detects mic/camera usage and lock state on Windows. "
+                    "Status shown in the tray and on a BLE-paired e-paper tag.")
     ap.add_argument("--settings", action="store_true",
                     help="Open settings dialog and exit")
     ap.add_argument("--setup-help", action="store_true",
