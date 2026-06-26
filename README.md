@@ -1,13 +1,16 @@
 # MeetingStatus-E-Ink
 
-Automatically shows whether you are **available** or **in a meeting** on a small
-Bluetooth e-paper tag — driven by your PC's microphone and camera activity.
+Automatically shows whether you are **available**, **in a meeting**, or **away**
+on a small Bluetooth e-paper tag — driven by your PC's microphone and camera
+activity and by whether your screen is locked.
 
 When any app starts using your microphone or camera (Teams, Zoom, Meet, Webex,
 Slack, Discord, and so on), the program flips your status to **IN MEETING**.
-When nothing is using them, it shows **AVAILABLE**. The status is displayed both
-as a colored dot in the Windows system tray and on a Gicisky / PICKSMART e-paper
-shelf-label tag over Bluetooth Low Energy.
+When nothing is using them, it shows **AVAILABLE**. And the moment you lock your
+computer with **Win+L**, it switches to **AWAY** — returning to AVAILABLE (or
+IN MEETING) as soon as you unlock. The status is displayed both as a colored dot
+in the Windows system tray and on a Gicisky / PICKSMART e-paper shelf-label tag
+over Bluetooth Low Energy.
 
 > Windows only. Everything is in a single Python file — no separate driver needed.
 
@@ -19,10 +22,14 @@ shelf-label tag over Bluetooth Low Energy.
 
 - **Automatic detection** of mic/camera usage via the Windows registry — works
   with any meeting or call app.
+- **Lock-aware AWAY status**: lock your PC (Win+L or any other way) and the tag
+  shows **AWAY** instantly; unlock and it returns to AVAILABLE or IN MEETING.
+  Lock/unlock is detected through Windows session events, so it is immediate and
+  does not wait for the polling interval.
 - **E-paper tag display** showing your name on top and your status below, with:
-  - a colored **frame** around the whole tag (black when available, red when in a meeting)
+  - a colored **frame** around the whole tag (black when available or away, red when in a meeting)
   - an optional **status icon** beside the text, chosen separately for each state
-- **System tray dot**: green when available, red when busy, gray on startup.
+- **System tray dot**: green when available, red when busy, blue when away, gray on startup.
 - **Battery-friendly**: the tag is only rewritten when your status actually
   changes — not on every poll. (E-paper takes ~15–20 s per update and only draws
   power while updating.)
@@ -45,6 +52,16 @@ as a black/white/red panel and are driven with the BWR dual-plane image format.
 
 ---
 
+## Status modes
+
+| Mode | Trigger | Tag appearance | Tray dot |
+|------|---------|----------------|----------|
+| **AVAILABLE** | Mic and camera idle, screen unlocked | Black text, black frame | Green |
+| **IN MEETING** | Any app using mic or camera | Red text, red frame | Red |
+| **AWAY** | Screen locked (e.g. Win+L) | Black text, black frame | Blue |
+
+---
+
 ## Status icons
 
 Icons are drawn in code as clean single-color symbols, so they look right on
@@ -52,6 +69,7 @@ e-paper. You pick one for each state (or none).
 
 **When AVAILABLE:** Check · Thumbs up · Coffee cup · Filled dot · Smiley
 **When IN MEETING:** Speech bubble · Video camera · Headset · Phone · Video / play
+**When AWAY:** Padlock · Door · Clock · Moon · Walking person · Coffee cup
 
 ---
 
@@ -120,6 +138,9 @@ The finished file appears at **`dist\MeetingStatus.exe`**.
 | `--hidden-import=PIL._tkinter_finder` | Needed so the Settings dialog (tkinter) works |
 | `--collect-all pystray / PIL / bleak` | Bundle all submodules so the tray icon and Bluetooth work |
 
+> **Note:** The lock/unlock detection uses Windows' own `user32` and `wtsapi32`
+> libraries via `ctypes`, so it needs no extra PyInstaller flags.
+
 > **Note:** Some antivirus tools (including Windows Defender) show a false positive
 > for PyInstaller-built executables. This is common and harmless — approve the file
 > manually, especially before sharing it with colleagues.
@@ -134,7 +155,7 @@ The finished file appears at **`dist\MeetingStatus.exe`**.
 3. Tick **Enable e-paper tag**, then click **Scan for tags**.
 4. Select your tag in the list (e.g. `NEMR92815292`) and click **Use selected**.
 5. Type your name in the **Name** field.
-6. Choose icons for **AVAILABLE** and **IN MEETING** if you like.
+6. Choose icons for **AVAILABLE**, **IN MEETING**, and **AWAY** if you like.
 7. Click **Save**.
 
 The program remembers the tag's address and reconnects automatically next time.
@@ -148,8 +169,8 @@ a shortcut to the program in the folder that opens.
 
 | Item | What it does |
 |------|--------------|
-| **Status** | Current mode: AVAILABLE, IN MEETING or OFF |
-| **Source** | Which app triggered "busy" (e.g. `Teams.exe`) |
+| **Status** | Current mode: AVAILABLE, IN MEETING, AWAY or OFF |
+| **Source** | What triggered the status (e.g. `Teams.exe`, or `locked`) |
 | **Tag** | Tag state: ready, writing…, or off |
 | **Settings…** | Open the settings window |
 | **Update tag now** | Force an immediate redraw of the tag |
@@ -160,6 +181,14 @@ a shortcut to the program in the folder that opens.
 
 ## Notes
 
+- **AWAY follows your lock screen.** Locking with `Win+L` (or any other way the
+  screen locks) shows **AWAY** immediately; unlocking returns you to AVAILABLE,
+  or IN MEETING if a call is still using your mic or camera. While locked, the
+  program leaves the tag on AWAY and stops polling the mic/camera.
+- **Lock not showing AWAY?** Check `meeting_status.log` next to the program for
+  `Session monitor active (instant lock/unlock).` at startup and
+  `WTS_SESSION_LOCK received` when you press Win+L. In some locked-down corporate
+  environments, session-change notifications can be restricted by group policy.
 - **Mute is still "in a meeting".** When you mute in Teams/Zoom/etc., the app
   keeps the microphone open at the OS level, so you'll still show as IN MEETING.
   The only undetected case is muted + camera off + only listening.
